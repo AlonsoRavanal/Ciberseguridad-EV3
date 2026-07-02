@@ -8,9 +8,22 @@ pipeline {
             }
         }
 
-        stage('Pruebas') {
+        stage('Pruebas SAST (Código)') {
             steps {
-                echo 'Ejecutando pruebas basicas...'
+                echo 'Ejecutando escaneo de seguridad en el código con Bandit...'
+                sh 'pip install bandit'
+                sh 'bandit -r . -f txt -o reporte-bandit.txt || true'
+                sh 'cat reporte-bandit.txt'
+            }
+        }
+
+        stage('Pruebas SCA (Dependencias)') {
+            steps {
+                echo 'Ejecutando análisis de composición de software (SCA) con Safety...'
+                sh 'pip install -r requirements.txt'
+                sh 'pip install safety'
+                sh 'safety check -r requirements.txt > reporte-sca.txt || true'
+                sh 'cat reporte-sca.txt'
             }
         }
 
