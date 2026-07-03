@@ -71,15 +71,76 @@ pipeline {
                         -sf http://app-evaluacion3:5000 || echo "La aplicación no responde"
                 '''
             }
-         }
-    }
+        }
 
-    post {
-        always {
-            archiveArtifacts(
-                artifacts: 'results.xml, reporte-bandit.txt, reporte-sca.txt',
-                allowEmptyArchive: true
-            )
+        stage('Pruebas DAST (OWASP ZAP)') {
+            steps {
+                echo 'Ejecutando escaneo dinámico de seguridad con OWASP ZAP...'
+                sh """
+                    docker volume rm zap-report-vol 2>/dev/null || true
+                    docker volume create zap-report-vol
+
+                    docker run --rm \
+                        -v zap-report-vol:/zap/wrk \
+                        alpine sh -c 'chmod 777 /zap/wrk'
+
+                    echo "=== Verificando que la aplicacion responda antes del escaneo ==="
+                    docker run --rm \
+                        --network secureweb-network \
+                        curlimages/curl:latest \
+                        -sf ${APP_URL} || echo "La aplicacion no responde"
+
+                    echo "=== Ejecutando OWASP ZAP Baseline Scan ==="
+                    docker run --rm \
+                        -u root \
+                        --network secureweb-network \
+                        -v zap-report-vol:/zap/wrk/:rw \
+                        ghcr.io/zaproxy/zaproxy:stable \
+                            zap-baseline.py \
+                                -t ${APP_URL} \
+                                -r reporte-zap.html \
+                                -J reporte-zap.json \
+                                --auto || true
+
+                    rm -rf \${WORKSPACE}/zap-reports
+                    mkdir -p \${WORKSPACE}/zap-reports
+
+                    docker rm -f zap-copy 2>/dev/null || true
+                    docker create --name zap-copy -v zap-report-vol:/report alpine
+                    docker cp zap-copy:/report/. \${WORKSPACE}/zap-reports/ || true
+                    docker rm zap-copy || true
+
+                    chmod 644 \${WORKSPACE}/zap-reports/* 2>/dev/null || true
+
+                    echo "=== Contenido de zap-reports ==="
+                    ls -la \${WORKSPACE}/zap-reports/ || true
+                """
+
+                publishHTML(target: [
+                    allowMissing : true,
+                    alwaysLinkToLastBuild : true,
+                    keepAll : true,
+                    reportDir : "zap-reports",
+                    reportFiles : 'reporte-zap.html',
+                    reportName : 'OWASP ZAP Report'
+                ])
+            }
         }
     }
-} 
+    
+    post {
+        always {
+            sh '''
+                cp ${WORKSPACE}/zap-reports/reporte-zap.html ${WORKSPACE}/ 2>/dev/null || true
+                cp ${WORKSPACE}/zap-reports/reporte-zap.json ${WORKSPACE}/ 2>/dev/null || true
+            '''
+
+            archiveArtifacts(
+                artifacts: 'results.xml, reporte-bandit.txt, reporte-sca.txt, reporte-zap.html, reporte-zap.json',
+                allowEmptyArchive: true
+            )
+
+            sh 'docker rm -f app-evaluacion3 || true'
+        }
+    }
+}
