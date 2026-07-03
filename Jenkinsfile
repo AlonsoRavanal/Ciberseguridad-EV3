@@ -1,14 +1,22 @@
 pipeline {
     agent any
 
+    environment {
+        APP_URL = 'http://app-evaluacion3:5000'
+    }
+
     options {
         ansiColor('xterm')
     }
-    
+
     stages {
-        stage('Construccion') {
+        stage('Construccion (Docker)') {
             steps {
-                echo 'Construyendo la aplicacion vulnerable...'
+                echo 'Construyendo la imagen Docker de la aplicación...'
+                sh '''
+                    docker network create secureweb-network || true
+                    docker build -t ciberseguridad-evaluacion3:${BUILD_NUMBER} .
+                '''
             }
         }
 
@@ -16,16 +24,14 @@ pipeline {
             steps {
                 echo 'Instalando las librerías del proyecto y herramientas de prueba...'
                 sh 'pip3 install -r requirements.txt --break-system-packages'
-                sh 'pip3 install bandit --break-system-packages'
-                sh 'pip3 install safety --break-system-packages'
-                sh 'pip3 install pytest --break-system-packages'
+                sh 'pip3 install bandit safety pytest --break-system-packages'
             }
         }
 
         stage('Pruebas Unitarias') {
             steps {
                 echo 'Ejecutando pruebas unitarias con Pytest...'
-                sh '/var/jenkins_home/.local/bin/pytest --junitxml=results.xml || true'
+                sh 'pytest --junitxml=results.xml || true'
                 junit allowEmptyResults: true, testResults: 'results.xml'
             }
         }
@@ -48,8 +54,32 @@ pipeline {
 
         stage('Despliegue') {
             steps {
-                echo 'Desplegando aplicacion en entorno de prueba...'
+                echo 'Desplegando la aplicación en contenedor Docker...'
+                sh '''
+                    docker rm -f app-evaluacion3 || true
+                    docker run -d \
+                        --name app-evaluacion3 \
+                        --network secureweb-network \
+                        -p 5000:5000 \
+                        ciberseguridad-evaluacion3:${BUILD_NUMBER}
+
+                    sleep 5
+
+                    docker run --rm \
+                        --network secureweb-network \
+                        curlimages/curl:latest \
+                        -sf http://app-evaluacion3:5000 || echo "La aplicación no responde"
+                '''
             }
+         }
+    }
+
+    post {
+        always {
+            archiveArtifacts(
+                artifacts: 'results.xml, reporte-bandit.txt, reporte-sca.txt',
+                allowEmptyArchive: true
+            )
         }
     }
-}
+} 
