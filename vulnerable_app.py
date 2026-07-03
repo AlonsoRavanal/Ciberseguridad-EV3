@@ -1,10 +1,15 @@
-from flask import Flask, request, render_template_string, session, redirect, url_for, flash
+from flask import Flask, request, render_template_string, session, redirect, url_for
 import sqlite3
 import os
 import hashlib
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
+
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+)
 
 
 def get_db_connection():
@@ -15,6 +20,58 @@ def get_db_connection():
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
+
+
+# CORRECCIÓN (hallazgos ZAP): se agregan las cabeceras de seguridad que ZAP 
+# reportó como ausentes, en todas las respuestas de la aplicación.
+@app.after_request
+def set_security_headers(response):
+    # Medium - Content Security Policy (CSP) Header Not Set
+    # Política restrictiva: solo permite recursos del propio origen.
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self'; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+
+    # Medium - Missing Anti-clickjacking Header
+    response.headers['X-Frame-Options'] = 'DENY'
+
+    # Low - X-Content-Type-Options Header Missing
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+
+    # Low - Cross-Origin-Opener-Policy Header Missing or Invalid
+    response.headers['Cross-Origin-Opener-Policy'] = 'same-origin'
+
+    # Low - Cross-Origin-Embedder-Policy Header Missing or Invalid
+    response.headers['Cross-Origin-Embedder-Policy'] = 'require-corp'
+
+    # Low - Cross-Origin-Resource-Policy Header Missing or Invalid
+    response.headers['Cross-Origin-Resource-Policy'] = 'same-origin'
+
+    # Low - Permissions Policy Header Not Set
+    # Deshabilita el acceso a APIs sensibles del navegador que la app no usa.
+    response.headers['Permissions-Policy'] = (
+        "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
+    )
+
+    # Low - Server Leaks Version Information via "Server" HTTP Response Header
+    # El servidor de desarrollo de Werkzeug agrega "Server: Werkzeug/x Python/x".
+    # Se sobreescribe con un valor genérico para no revelar versiones exactas.
+    response.headers['Server'] = 'WebServer'
+
+    # Informational - Storable and Cacheable Content
+    # Las respuestas contienen datos de sesión/tareas de usuario: 
+    # se evita que queden cacheadas por proxies o el propio navegador.
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, private'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+
+    return response
 
 
 @app.route('/')
@@ -35,12 +92,10 @@ def login():
         # Se utiliza exclusivamente la consulta parametrizada con placeholders (?)
         query = "SELECT * FROM users WHERE username = ? AND password = ?"
         hashed_password = hash_password(password)
-        
+
         # Ejecución segura de la consulta
         user = conn.execute(query, (username, hashed_password)).fetchone()
-
-        print("Consulta SQL generada:", query)
-
+        conn.close()
         if user:
             session['user_id'] = user['id']
             session['role'] = user['role']
@@ -60,7 +115,7 @@ def login():
 def dashboard():
     if 'user_id' not in session:
         return redirect(url_for('login'))
-
+    
     user_id = session['user_id']
     conn = get_db_connection()
     tasks = conn.execute(
@@ -77,8 +132,8 @@ def dashboard():
         <ul>
         {% for task in tasks %}
             <li>
-                {{ task['task'] }} 
-                
+                {{ task['task'] }}
+
                 <!--CORRECCIÓN: Ahora la eliminación se hace a través de una petición POST-->
                 <form action="/delete_task/{{ task['id'] }}" method="post" style="display:inline;">
                     <input type="submit" value="Delete">
@@ -93,7 +148,7 @@ def dashboard():
 def add_task():
     if 'user_id' not in session:
         return redirect(url_for('login'))
-
+    
     task = request.form['task']
     user_id = session['user_id']
 
@@ -106,19 +161,19 @@ def add_task():
     return redirect(url_for('dashboard'))
 
 
-@app.route('/delete_task/<int:task_id>')
+@app.route('/delete_task/<int:task_id>', methods=['POST'])
 def delete_task(task_id):
     if 'user_id' not in session:
         return redirect(url_for('login'))
-
+    
     conn = get_db_connection()
 
     # CORRECCIÓN: La tarea se elimina si pertenece al usuario autenticado
     conn.execute("DELETE FROM tasks WHERE id = ? AND user_id = ?", (task_id, session['user_id']))
-
+    
     conn.commit()
     conn.close()
-
+    
     return redirect(url_for('dashboard'))
 
 
@@ -126,7 +181,7 @@ def delete_task(task_id):
 def admin():
     if 'user_id' not in session or session.get('role') != 'admin':
         return redirect(url_for('login'))
-
+    
     return 'Welcome to the admin panel!'
 
 
