@@ -30,14 +30,14 @@ def login():
 
         conn = get_db_connection()
 
-        # Inyección de SQL solo si se detecta un payload de inyección de SQL
-        if "' OR '" in password:
-            query = f"SELECT * FROM users WHERE username = '{username}' AND password = '{password}'"
-            user = conn.execute(query).fetchone()
-        else:
-            query = "SELECT * FROM users WHERE username = ? AND password = ?"
-            hashed_password = hash_password(password)
-            user = conn.execute(query, (username, hashed_password)).fetchone()
+        # CORRECCIÓN CWE-89: INYECCIÓN SQL
+        # Se elimina la concatenación insegura (f-strings).
+        # Se utiliza exclusivamente la consulta parametrizada con placeholders (?)
+        query = "SELECT * FROM users WHERE username = ? AND password = ?"
+        hashed_password = hash_password(password)
+        
+        # Ejecución segura de la consulta
+        user = conn.execute(query, (username, hashed_password)).fetchone()
 
         print("Consulta SQL generada:", query)
 
@@ -76,7 +76,14 @@ def dashboard():
         <h2>Your Tasks</h2>
         <ul>
         {% for task in tasks %}
-            <li>{{ task['task'] }} <a href="/delete_task/{{ task['id'] }}">Delete</a></li>
+            <li>
+                {{ task['task'] }} 
+                
+                <!--CORRECCIÓN: Ahora la eliminación se hace a través de una petición POST-->
+                <form action="/delete_task/{{ task['id'] }}" method="post" style="display:inline;">
+                    <input type="submit" value="Delete">
+                </form>
+            </li>
         {% endfor %}
         </ul>
     ''', user_id=user_id, tasks=tasks)
@@ -105,7 +112,10 @@ def delete_task(task_id):
         return redirect(url_for('login'))
 
     conn = get_db_connection()
-    conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+
+    # CORRECCIÓN: La tarea se elimina si pertenece al usuario autenticado
+    conn.execute("DELETE FROM tasks WHERE id = ? AND user_id = ?", (task_id, session['user_id']))
+
     conn.commit()
     conn.close()
 
@@ -121,4 +131,6 @@ def admin():
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    # CORRECCIÓN CWE-94: debug=True
+    # Se desactiva el modo debug para entornos de producción
+    app.run(debug=False)
