@@ -24,13 +24,8 @@ pipeline {
 
         stage('Pruebas Unitarias') {
             steps {
-                echo 'Preparando entorno virtual y ejecutando pruebas con Pytest...'
-                sh '''
-                    python3 -m venv venv || true
-                    . venv/bin/activate || true
-                    pip install --upgrade pip || true
-                    pytest --junitxml=results.xml || true
-                '''
+                echo 'Ejecutando pruebas unitarias con Pytest...'
+                sh '/var/jenkins_home/.local/bin/pytest --junitxml=results.xml || true'
                 junit allowEmptyResults: true, testResults: 'results.xml'
             }
         }
