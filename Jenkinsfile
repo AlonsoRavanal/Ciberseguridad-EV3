@@ -14,10 +14,24 @@ pipeline {
 
         stage('Instalar Dependencias') {
             steps {
-                echo 'Instalando las librerías del proyecto desde requirements.txt...'
+                echo 'Instalando las librerías del proyecto y herramientas de prueba...'
                 sh 'pip3 install -r requirements.txt --break-system-packages'
                 sh 'pip3 install bandit --break-system-packages'
                 sh 'pip3 install safety --break-system-packages'
+                sh 'pip3 install pytest --break-system-packages'
+            }
+        }
+
+        stage('Pruebas Unitarias') {
+            steps {
+                echo 'Preparando entorno virtual y ejecutando pruebas con Pytest...'
+                sh '''
+                    python3 -m venv venv || true
+                    . venv/bin/activate || true
+                    pip install --upgrade pip || true
+                    pytest --junitxml=results.xml || true
+                '''
+                junit allowEmptyResults: true, testResults: 'results.xml'
             }
         }
 
