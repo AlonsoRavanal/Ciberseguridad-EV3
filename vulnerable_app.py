@@ -2,6 +2,8 @@ from flask import Flask, request, render_template_string, session, redirect, url
 import sqlite3
 import os
 import hashlib
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+import time
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
@@ -9,6 +11,17 @@ app.secret_key = os.urandom(24)
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
+)
+
+REQUEST_COUNT = Counter(
+    'flask_requests_total',
+    'Total de solicitudes HTTP',
+    ['method', 'endpoint']
+)
+
+REQUEST_LATENCY = Histogram(
+    'flask_request_duration_seconds',
+    'Tiempo de respuesta de las solicitudes'
 )
 
 
@@ -21,11 +34,23 @@ def get_db_connection():
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
+@app.before_request
+def before_request():
+    request.start_time = time.time()
 
 # CORRECCIÓN (hallazgos ZAP): se agregan las cabeceras de seguridad que ZAP 
 # reportó como ausentes, en todas las respuestas de la aplicación.
 @app.after_request
 def set_security_headers(response):
+    REQUEST_COUNT.labels(
+        request.method,
+        request.path
+    ).inc()
+
+    REQUEST_LATENCY.observe(
+        time.time() - request.start_time
+    )
+
     # Medium - Content Security Policy (CSP) Header Not Set
     # Política restrictiva: solo permite recursos del propio origen.
     response.headers['Content-Security-Policy'] = (
@@ -184,6 +209,11 @@ def admin():
     
     return 'Welcome to the admin panel!'
 
+@app.route('/metrics')
+def metrics():
+    return generate_latest(), 200, {
+        'Content-Type': CONTENT_TYPE_LATEST
+    }
 
 if __name__ == '__main__':
     # CORRECCIÓN CWE-94: debug=True
